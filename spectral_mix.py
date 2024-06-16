@@ -12,12 +12,6 @@ class SpectralMix:
         self.adjacency_matrix = adjacency_matrix
         self.attribute_matrix = attribute_matrix
         self.num_nodes, _, self.num_rels = adjacency_matrix.shape               # number of nodes and relation types
-    
-        # This implemetation for now assumes undirected graphs
-        # We therefore get the lower triangular matrix of each dimension to save work later
-        self.tril_adj_matrix = np.zeros((self.num_nodes, self.num_nodes, self.num_rels))
-        for r in range(self.num_rels):
-            self.tril_adj_matrix[:, :, r] = np.tril(adjacency_matrix[:, :, r], -1)
 
         self.num_attr = self.attribute_matrix.shape[1]                          # number of attribute categories
         self.count_attr = []                                                    # holds the count of each category in each attribute
@@ -37,7 +31,7 @@ class SpectralMix:
         self.max_weight = 0
         self.max_index = -1
         for r in range(self.num_rels):
-            rel_edges = self.tril_adj_matrix[:, :, r]
+            rel_edges = self.adjacency_matrix[:, :, r]
             self.sum_weight[r] = np.sum(rel_edges)
             if self.sum_weight[r] > self.max_weight:
                 self.max_weight = self.sum_weight
@@ -56,7 +50,7 @@ class SpectralMix:
 
         self.sum_g = np.zeros(size=(self.num_nodes,))
         for r in range(self.num_rels):
-            non_zero = np.count_nonzero(self.tril_adj_matrix[:, :, r], axis=1)
+            non_zero = np.count_nonzero(self.adjacency_matrix[:, :, r], axis=1)
             self.sum_g += non_zero.reshape(-1, 1) * self.weighting_factor[r]
 
         # add the weighting of the attributes to the
@@ -72,10 +66,16 @@ class SpectralMix:
                 for p in range(self.num_nodes):
                     for l in range(self.d): 
                         self.o[:, l] += self.o[p, l] * self.weighting_factor[self.num_rels] * self.adjacency_matrix[:, p, r] / self.sum_g[:]
+
+            # attribute contribution
+            mask = self.attribute_matrix != -1
+            attribute_weighting_factors = self.weighting_factor[self.num_rels:self.num_rels + self.num_attr]
+            scaled_weighting_factors = attribute_weighting_factors / self.sum_g[:, np.newaxis]
+            scaled_weighted_attributes = mask * scaled_weighting_factors
             for j in range(self.num_attr):
-                if self.attribute_matrix[i, j] != -1:
+                if np.any(mask[:, j]): 
                     for l in range(self.d):
-                        self.o[:, l] += self.weighting_factor[self.num_rels + j] * self.m[j, l] / self.sum_g[:]
+                        self.o[:, l] += scaled_weighted_attributes[:, j] * self.m[j, l]
             self.o, _ = np.linalg.qr(self.o)
             for l in range(self.d):
                 for j in range(self.num_attr):
