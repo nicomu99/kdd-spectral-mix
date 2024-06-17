@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.cluster import KMeans
+from tqdm import tqdm
 
 class SpectralMix:
     def __init__(self, d=7, k=7, iter=100, etol=1e-8):
@@ -7,22 +8,27 @@ class SpectralMix:
         self.etol = etol
         self.d = d
         self.k = k
+        self.labels_ = None
 
     def fit(self, adjacency_matrix, attribute_matrix):
         self.adjacency_matrix = adjacency_matrix
         self.attribute_matrix = attribute_matrix
         self.num_nodes, _, self.num_rels = adjacency_matrix.shape               # number of nodes and relation types
 
-        self.num_attr = self.attribute_matrix.shape[1]                          # number of attribute categories
+        if attribute_matrix is not None:
+            self.num_attr = self.attribute_matrix.shape[1]                          # number of attribute categories
+        else:
+            self.num_attr = 0
         self.count_attr = []                                                    # holds the count of each category in each attribute
         for a in range(self.num_attr):
             values, counts = np.unique(self.attribute_matrix[:, a], return_counts=True)
             if values[0] == -1:
                 counts = counts[1:]
             self.count_attr.append(counts)
+        self.count_attr = np.array(self.count_attr)
 
-        self.o = np.random.randn(size=(self.num_nodes, self.d))
-        self.m = np.random.randn(size=(self.num_attr, self.d))
+        self.o = np.random.randn(self.num_nodes, self.d)
+        self.m = np.random.randn(self.num_attr, self.d)
         
         self.weighting_factor = np.zeros(self.num_rels + self.num_attr)
         self.sum_weight = np.zeros(self.num_rels + self.num_attr)
@@ -34,7 +40,7 @@ class SpectralMix:
             rel_edges = self.adjacency_matrix[:, :, r]
             self.sum_weight[r] = np.sum(rel_edges)
             if self.sum_weight[r] > self.max_weight:
-                self.max_weight = self.sum_weight
+                self.max_weight = self.sum_weight[r]
                 self.max_index = r
 
         # iterate over the number of attributes and the number of distinct categories in each attribute
@@ -48,24 +54,27 @@ class SpectralMix:
         
         self.weighting_factor = self.sum_weight / self.max_weight
 
-        self.sum_g = np.zeros(size=(self.num_nodes,))
+        self.sum_g = np.zeros(shape=(self.num_nodes,))
         for r in range(self.num_rels):
             non_zero = np.count_nonzero(self.adjacency_matrix[:, :, r], axis=1)
-            self.sum_g += non_zero.reshape(-1, 1) * self.weighting_factor[r]
+            self.sum_g += non_zero * self.weighting_factor[r]
 
         # add the weighting of the attributes to the
         for a in range(self.num_attr): 
-            contains_negative_attr = np.any(self.attribute_matrix[:, a] < 0, axis=1)
+            contains_negative_attr = np.any(self.attribute_matrix[:, a] < 0, axis=0)
             contains_negative_attr = (~contains_negative_attr).astype(int)
-            contains_negative_attr = contains_negative_attr.reshape(-1, 1)
             self.sum_g += contains_negative_attr * self.weighting_factor[self.num_rels + a]
 
-        iterations = 0
-        while iterations < self.iter:
+        identity_mask = np.eye(self.num_nodes, dtype=bool)
+        for _ in tqdm(range(self.iter)):
             for r in range(self.num_rels):
-                for p in range(self.num_nodes):
-                    for l in range(self.d): 
-                        self.o[:, l] += self.o[p, l] * self.weighting_factor[self.num_rels] * self.adjacency_matrix[:, p, r] / self.sum_g[:]
+                neighbors = self.adjacency_matrix[:, :, r] 
+                neighbors = np.where(identity_mask, 0, neighbors)
+                for l in range(self.d):
+                    o_col = self.o[:, l]
+                    weighted_contributions = (self.weighting_factor[r] * neighbors * o_col[np.newaxis, :])
+                    contribution_sums = np.sum(weighted_contributions, axis=1)
+                    self.o[:, l] += contribution_sums / self.sum_g
 
             # attribute contribution
             mask = self.attribute_matrix != -1
@@ -77,15 +86,18 @@ class SpectralMix:
                     for l in range(self.d):
                         self.o[:, l] += scaled_weighted_attributes[:, j] * self.m[j, l]
             self.o, _ = np.linalg.qr(self.o)
+            
             for l in range(self.d):
-                for j in range(self.num_attr):
-                    pos_boolean = self.attribute_matrix[:, j] != -1
-                    pos_indices = self.attribute_matrix[pos_boolean, j]
-                    self.m[j, l] = np.sum(self.o[pos_boolean, l] / self.count_attr[j, pos_indices])
+                o_col = self.o[:, l][:, np.newaxis] 
+                for a in range(self.num_attr):
+                    attr_column = self.attribute_matrix[:, a]
+                    valid_indices = mask[:, a]
+                    count_values = np.where(valid_indices, self.count_attr[a, attr_column], 1)
+                    contributions = np.where(valid_indices, o_col.flatten() / count_values, 0)
+                    self.m[a, l] += np.sum(contributions)
 
-            iterations += 1
 
         kmeans_model = KMeans(n_clusters=self.k).fit(self.o)
-        self.labels = kmeans_model.labels_
+        self.labels_ = kmeans_model.labels_
 
         return self
