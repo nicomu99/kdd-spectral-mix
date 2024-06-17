@@ -10,7 +10,7 @@ class SpectralMix:
         self.k = k
         self.labels_ = None
 
-    def fit(self, adjacency_matrix, attribute_matrix):
+    def fit(self, adjacency_matrix, attribute_matrix, run_clustering=True):
         self.adjacency_matrix = adjacency_matrix
         self.attribute_matrix = attribute_matrix
         self.num_nodes, _, self.num_rels = adjacency_matrix.shape               # number of nodes and relation types
@@ -97,7 +97,8 @@ class SpectralMix:
                     self.m[a, l] += np.sum(contributions)
 
 
-        kmeans_model = KMeans(n_clusters=self.k).fit(self.o)
-        self.labels_ = kmeans_model.labels_
+        if run_clustering:
+            kmeans_model = KMeans(n_clusters=self.k).fit(self.o)
+            self.labels_ = kmeans_model.labels_
 
         return self
