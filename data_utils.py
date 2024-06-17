@@ -18,6 +18,7 @@ class DataLoader():
             adjacency_matrix, true_labels =  self.construct_matrix('flickr', ['layer0', 'layer1'])
         else:
             adjacency_matrix, attribute_matrix, true_labels = self.construct_matrix('imdb', [])
+            attribute_matrix = attribute_matrix.astype(int)
 
         return {
             'adjacency_matrix': adjacency_matrix,
